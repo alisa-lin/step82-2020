@@ -13,8 +13,8 @@ const Users = () => {
       <Sidebar />
       <Layout className="site-layout">
         <Topbar />
-        <Content style={{ position: 'relative', margin: '24px 16px 0', overflow: 'initial' }}>
-          <div className="site-layout-background" style={{ padding: '24px', textAlign: 'center' }}>
+        <Content className="site-layout-content">
+          <div className="site-layout-background" style={{ textAlign: 'center' }}>
 
           </div>
         </Content>
