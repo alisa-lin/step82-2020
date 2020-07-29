@@ -60,22 +60,26 @@ def store_user():
         }
         return response_object, 200
 
-def fetch_users(limit):
-    query = datastore_client.query(kind='user')
-    query.order = ['registered_on']
-
-    users = query.fetch(limit=limit)
-
-    return users
-
 @app.route('/apis/fetch-users', methods=['GET'])
-def show_users():
-    limit = int(request.headers.get('limit'))    
-    users = fetch_users(limit)
-    array = []
-    for user in users:
-        array.append([user['email'], user['username'], user['password_hash'], user['registered_on'], user['deleted']])
-    return jsonify(array)
+def fetch_users():
+    resp_token = decode_auth_token(request.headers.get('Authorization'))
+    if is_valid_instance(resp_token):
+        query = datastore_client.query(kind='user').add_filter('deleted', '=', False)
+        users = list(query.fetch())
+        array = []
+        for user in users:
+            if user.id != resp_token:
+                array.append({
+                    'id': user.id,
+                    'username': user['username']
+                })
+        return jsonify(array), 200
+    else:
+        response_object = {
+            'status': 'fail',
+            'message': 'Invalid JWT. Failed to fetch users.'
+        }
+        return response_object, 401
 
 # login api
 @app.route('/apis/login', methods=['POST'])
@@ -244,15 +248,15 @@ def add_bookmark():
             'description': request.json['description'],
             'deleted': False,
             'created': datetime.datetime.now(timezone.utc),
-            'creator': str(resp_token)
+            'creator': int(resp_token)
         })
         datastore_client.put(entity)
 
         for clink in request.json['clink']:
             map_entity = datastore.Entity(key=datastore_client.key('bookmark_clink_map'));
             map_entity.update({
-                'clink_id': clink,
-                'bookmark_id': entity.id
+                'clink_id': int(clink),
+                'bookmark_id': int(entity.id)
             })
             datastore_client.put(map_entity)
 
@@ -283,12 +287,20 @@ def add_clink():
                 'message': 'Cannot create a clink called \"All\". Failed to add clink.'
             }
             return response_object, 401
+        elif title == 'User Page':
+            response_object = {
+                'status': 'fail',
+                'message': 'Cannot create a clink called \"User Page\". Failed to add clink.'
+            }
+            return response_object, 401
 
+        private = request.json['privacy']
+        
         clink_entity = datastore.Entity(key=datastore_client.key('clink'))
         clink_entity.update({
             'title': title,
             'deleted': False,
-            'private': request.json['privacy'],
+            'private': private,
             'created': datetime.datetime.now(timezone.utc)
         })  
         datastore_client.put(clink_entity)
@@ -297,8 +309,8 @@ def add_clink():
         read_entity = datastore.Entity(key=datastore_client.key('user_read_map'))
 
         mapping = {
-            'clink_id': clink_entity.id,
-            'user_id': str(resp_token)
+            'clink_id': int(clink_entity.id),
+            'user_id': int(resp_token)
         }
             
         write_entity.update(mapping)
@@ -308,6 +320,7 @@ def add_clink():
 
         response_object = {
             'title': title,
+            'private': private,
             'id': clink_entity.id
         }
         return response_object, 200  
@@ -323,18 +336,18 @@ def fetch_clinks():
     resp_token = decode_auth_token(request.headers.get('Authorization'))
 
     if is_valid_instance(resp_token):
-        clink_ids = list(datastore_client.query(kind='user_read_map').add_filter('user_id', '=', str(resp_token)).fetch())
+        clink_ids = list(datastore_client.query(kind='user_read_map').add_filter('user_id', '=', int(resp_token)).fetch())
         all_query = datastore_client.query(kind='clink').add_filter('deleted', '=', False)
         all_query.order = ['created']
         all_list = list(all_query.fetch())
         to_return = []    
-
         for clink in all_list:
             for id in clink_ids:
                 if id['clink_id'] == clink.id:
                     response_object = {
                         'title': clink['title'],
-                        'id': clink.id 
+                        'id': clink.id,
+                        'private': clink['private'] 
                     }
                     to_return.append(response_object)
                     break
@@ -351,7 +364,7 @@ def fetch_write_clinks():
     resp_token = decode_auth_token(request.headers.get('Authorization'))
 
     if is_valid_instance(resp_token):
-        clink_ids = list(datastore_client.query(kind='user_write_map').add_filter('user_id', '=', str(resp_token)).fetch())
+        clink_ids = list(datastore_client.query(kind='user_write_map').add_filter('user_id', '=', int(resp_token)).fetch())
         all_query = datastore_client.query(kind='clink').add_filter('deleted', '=', False)
         all_query.order = ['created']
         all_list = list(all_query.fetch())
@@ -374,19 +387,17 @@ def fetch_write_clinks():
         }
         return response_object, 401
 
-@app.route('/apis/fetch-bookmarks', methods=['GET'])
-def fetch_bookmarks():
+@app.route('/apis/fetch-bookmarks/<string:clink_id>', methods=['GET'])
+def fetch_bookmarks(clink_id):
     resp_token = decode_auth_token(request.headers.get('Authorization'))
-
+    
     if is_valid_instance(resp_token):
-        clink_id = request.headers.get('id')
+        bookmark_query = datastore_client.query(kind='bookmark').add_filter('creator', '=', int(resp_token)).add_filter('deleted', '=', False)
+        bookmark_query.order = ['created']
+        all_list = list(bookmark_query.fetch())
         if clink_id == 'All':
-            bookmark_query = datastore_client.query(kind='bookmark').add_filter('creator', '=', str(resp_token)).add_filter('deleted', '=', False)
-            bookmark_query.order = ['created']
-            bookmark_ids = list(bookmark_query.fetch())
             to_return = []
-
-            for bookmark in bookmark_ids:
+            for bookmark in all_list:
                 response_object = {
                     'title': bookmark['title'],
                     'description': bookmark['description'],
@@ -396,8 +407,7 @@ def fetch_bookmarks():
                 to_return.append(response_object)              
             return jsonify(to_return), 200
         else:
-            bookmark_ids = list(datastore_client.query(kind='bookmark_clink_map').add_filter('clink_id', '=', clink_id).fetch())
-            all_list = list(datastore_client.query(kind='bookmark').add_filter('deleted', '=', False).fetch())
+            bookmark_ids = list(datastore_client.query(kind='bookmark_clink_map').add_filter('clink_id', '=', int(clink_id)).fetch())
             to_return = []    
 
             for bookmark in all_list:
@@ -409,7 +419,7 @@ def fetch_bookmarks():
                             'link': bookmark['link'],
                             'id': id['bookmark_id']
                         }
-                        to_return.append(response_object)              
+                        to_return.append(response_object)
             return jsonify(to_return), 200
     else:
         response_object = {
