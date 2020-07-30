@@ -274,6 +274,9 @@ def add_bookmark():
         }
         return response_object, 401
 
+def clink_entity_to_return(clink):
+    return { 'title': clink['title'], 'private': clink['private'], 'id': clink.id }
+
 # add clink api
 @app.route('/apis/add-clink', methods=['POST'])
 def add_clink():
@@ -328,6 +331,38 @@ def add_clink():
         response_object = {
             'status': 'fail',
             'message': 'Invalid JWT. Failed to add clink.'
+        }
+        return response_object, 401
+
+@app.route('/apis/delete-clink', methods=['POST'])
+def delete_clink():
+    resp_token = decode_auth_token(request.json['Authorization'])
+
+    if is_valid_instance(resp_token):
+        shared_entities = list(datastore_client.query(kind='user_write_map')
+                            .add_filter('clink_id', '=', int(request.json['clink']))
+                            .fetch())
+        shared_users = map(lambda entity: entity['user_id'], shared_entities)
+
+        if int(resp_token) not in shared_users:
+            response_object = {
+            'status': 'fail',
+            'message': 'You do not have write permissions. Failed to delete clink.'
+            }
+            return response_object, 401
+        
+        key = datastore_client.key('clink', request.json['clink'])
+        clink = datastore_client.get(key)
+
+        clink['deleted'] = True
+
+        datastore_client.put(clink)
+
+        return clink_entity_to_return(clink), 200
+    else:
+        response_object = {
+            'status': 'fail',
+            'message': 'Invalid JWT. Failed to delete clink.'
         }
         return response_object, 401
 
